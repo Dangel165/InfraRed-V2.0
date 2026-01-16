@@ -33,7 +33,22 @@ else:
     # 일반 Python 스크립트 실행
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-SETTINGS_FILE = os.path.join(SCRIPT_DIR, "settings.json")
+# 설정 파일 경로 결정 (기본 경로에서 실제 경로를 읽어옴)
+def get_settings_file_path():
+    """설정 파일 경로 결정 - 기본 경로에서 실제 경로를 읽어옴"""
+    default_path = os.path.join(SCRIPT_DIR, "settings.json")
+    if os.path.exists(default_path):
+        try:
+            with open(default_path, 'r', encoding='utf-8') as f:
+                temp_settings = json.load(f)
+                custom_path = temp_settings.get('settings_file_path', '')
+                if custom_path and os.path.exists(custom_path):
+                    return custom_path
+        except:
+            pass
+    return default_path
+
+SETTINGS_FILE = get_settings_file_path()
 print(f"[설정] 설정 파일 경로: {SETTINGS_FILE}")
 
 def load_settings():
@@ -494,6 +509,9 @@ class FolderHandler(FileSystemEventHandler):
 # 메인 GUI
 # ============================================================================
 class AntivirusGUI(QWidget):
+    # 실시간 감시 로그용 시그널
+    monitor_log_signal = pyqtSignal(str)
+    
     def __init__(self):
         super().__init__()
         self.setWindowTitle("🛡️ InfraRed")
@@ -506,6 +524,9 @@ class AntivirusGUI(QWidget):
         
         self.init_ui()
         self.apply_theme()
+        
+        # 실시간 감시 로그 시그널 연결
+        self.monitor_log_signal.connect(self._append_monitor_log)
         
         # 다크모드면 버튼 텍스트 변경
         if self.dark_mode:
@@ -907,9 +928,10 @@ class AntivirusGUI(QWidget):
 
         # 격리된 파일 목록
         self.quarantine_table = QTableWidget()
-        self.quarantine_table.setColumnCount(4)
-        self.quarantine_table.setHorizontalHeaderLabels(["파일명", "격리 시간", "위협 유형", "작업"])
+        self.quarantine_table.setColumnCount(5)
+        self.quarantine_table.setHorizontalHeaderLabels(["파일명", "격리 시간", "위협 유형", "작업", "경로"])
         self.quarantine_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.quarantine_table.verticalHeader().setDefaultSectionSize(40)  # 행 높이 설정
         layout.addWidget(self.quarantine_table)
 
         # 버튼
@@ -1359,7 +1381,16 @@ class AntivirusGUI(QWidget):
             if hasattr(engine, 'get_engine_stats'):
                 result_ptr = engine.get_engine_stats()
                 if result_ptr:
-                    result = json.loads(result_ptr.decode('utf-8'))
+                    # bytes를 여러 인코딩으로 시도
+                    try:
+                        result_str = result_ptr.decode('utf-8')
+                    except:
+                        try:
+                            result_str = result_ptr.decode('cp949')
+                        except:
+                            result_str = result_ptr.decode('utf-8', errors='replace')
+                    
+                    result = json.loads(result_str)
                     info_lines = []
                     info_lines.append(f"엔진 버전: {result.get('version', 'Unknown')}")
                     info_lines.append(f"시그니처: {result.get('signatures', 0)}개")
@@ -1367,15 +1398,21 @@ class AntivirusGUI(QWidget):
                     info_lines.append(f"의심 API: {result.get('suspicious_apis', 0)}개")
                     info_lines.append(f"MD5 해시: {result.get('md5_hashes', 0)}개")
                     info_lines.append(f"SHA256 해시: {result.get('sha256_hashes', 0)}개")
+                    info_lines.append(f"화이트리스트 해시: {result.get('whitelist_hashes', 0)}개")
+                    info_lines.append(f"화이트리스트 경로: {result.get('whitelist_paths', 0)}개")
                     features = result.get('features', [])
                     if features:
                         info_lines.append(f"기능: {', '.join(features)}")
                     self.engine_info_text.setPlainText('\n'.join(info_lines))
                     return
+                else:
+                    self.engine_info_text.setPlainText("엔진 정보: NULL 반환")
+                    return
+            else:
+                self.engine_info_text.setPlainText("엔진 정보: get_engine_stats 함수 없음")
+                return
         except Exception as e:
-            pass
-        
-        self.engine_info_text.setPlainText("엔진 정보를 가져올 수 없습니다.")
+            self.engine_info_text.setPlainText(f"엔진 정보 오류: {e}")
 
     # ========================================================================
     # YARA 룰 기능 구현
@@ -1528,7 +1565,7 @@ class AntivirusGUI(QWidget):
 
         # 버튼
         quarantine_btn_layout = QHBoxLayout()
-        change_folder_btn = QPushButton('📂 폴더 변경')
+        change_folder_btn = QPushButton('📂 경로 변경')
         change_folder_btn.clicked.connect(self.change_quarantine_folder)
         change_folder_btn.setStyleSheet("padding: 8px 16px;")
         quarantine_btn_layout.addWidget(change_folder_btn)
@@ -1553,6 +1590,48 @@ class AntivirusGUI(QWidget):
 
         quarantine_group.setLayout(quarantine_layout)
         layout.addWidget(quarantine_group)
+
+        # 설정 파일 경로 설정
+        settings_path_group = QGroupBox("📁 설정 파일 경로")
+        settings_path_layout = QVBoxLayout()
+
+        # 현재 설정 파일 경로 표시
+        current_settings_layout = QHBoxLayout()
+        current_settings_layout.addWidget(QLabel("현재 설정 파일:"))
+        self.settings_path_label = QLabel(SETTINGS_FILE)
+        self.settings_path_label.setObjectName("settings_path_label")
+        self.settings_path_label.setWordWrap(True)
+        current_settings_layout.addWidget(self.settings_path_label)
+        current_settings_layout.addStretch()
+        settings_path_layout.addLayout(current_settings_layout)
+
+        # 버튼
+        settings_btn_layout = QHBoxLayout()
+        change_settings_btn = QPushButton('📂 경로 변경')
+        change_settings_btn.clicked.connect(self.change_settings_folder)
+        change_settings_btn.setStyleSheet("padding: 8px 16px;")
+        settings_btn_layout.addWidget(change_settings_btn)
+
+        open_settings_btn = QPushButton('🔍 폴더 열기')
+        open_settings_btn.clicked.connect(self.open_settings_folder)
+        open_settings_btn.setStyleSheet("padding: 8px 16px;")
+        settings_btn_layout.addWidget(open_settings_btn)
+
+        reset_settings_btn = QPushButton('🔄 기본값으로')
+        reset_settings_btn.clicked.connect(self.reset_settings_folder)
+        reset_settings_btn.setStyleSheet("padding: 8px 16px;")
+        settings_btn_layout.addWidget(reset_settings_btn)
+        settings_btn_layout.addStretch()
+        settings_path_layout.addLayout(settings_btn_layout)
+
+        # 정보 레이블
+        settings_info_label = QLabel("💡 설정 파일 경로를 변경하면 기존 설정은 새 경로로 복사됩니다.")
+        settings_info_label.setStyleSheet("color: #7f8c8d; font-size: 11px; padding: 5px;")
+        settings_info_label.setWordWrap(True)
+        settings_path_layout.addWidget(settings_info_label)
+
+        settings_path_group.setLayout(settings_path_layout)
+        layout.addWidget(settings_path_group)
 
         # 시그니처 추가
         sig_group = QGroupBox("🔐 시그니처 관리")
@@ -1921,7 +2000,7 @@ li {{ margin: 5px 0; }}
 <li><strong>영구 삭제:</strong> 격리된 파일 완전 삭제</li>
 <li><strong>전체 비우기:</strong> 모든 격리 파일 한 번에 삭제</li>
 </ul>
-<p><strong>파일 핸들 강제 종료 (NEW!)</strong></p>
+<p><strong>파일 핸들 강제 종료</strong></p>
 <ul>
 <li>파일 사용 중인 프로세스 자동 탐지 및 종료</li>
 <li>최대 5번 재시도로 안정적인 격리</li>
@@ -1943,7 +2022,7 @@ li {{ margin: 5px 0; }}
 </ul>
 </div>
 
-<h2>🔬 고급 분석 (NEW!)</h2>
+<h2>🔬 고급 분석</h2>
 <div class="feature">
 <p><strong>PE 파일 분석</strong></p>
 <ul>
@@ -1965,7 +2044,7 @@ li {{ margin: 5px 0; }}
 </ul>
 </div>
 
-<h2>📜 YARA 룰 (NEW!)</h2>
+<h2>📜 YARA 룰</h2>
 <div class="feature">
 <p><strong>YARA 룰 엔진</strong></p>
 <ul>
@@ -1983,7 +2062,7 @@ li {{ margin: 5px 0; }}
 
 <h2>⚙️ 설정</h2>
 <div class="feature">
-<p><strong>격리 폴더 설정 (NEW!)</strong></p>
+<p><strong>격리 폴더 설정</strong></p>
 <ul>
 <li><strong>📂 폴더 변경:</strong> 원하는 위치로 격리 폴더 변경</li>
 <li><strong>🔍 폴더 열기:</strong> 현재 격리 폴더를 탐색기에서 열기</li>
@@ -2033,7 +2112,7 @@ li {{ margin: 5px 0; }}
 <h2>ℹ️ 버전 정보</h2>
 <div class="feature">
 <p><strong>버전:</strong> V2.0</p>
-<p><strong>최종 업데이트:</strong> 2026-01-08</p>
+<p><strong>최종 업데이트:</strong> 2026-01-17</p>
 </div>
 
 </body>
@@ -2084,7 +2163,31 @@ li {{ margin: 5px 0; }}
     def choose_and_scan(self):
         files, _ = QFileDialog.getOpenFileNames(self, "파일 선택")
         if files:
-            self._start_batch_scan(files, "파일 스캔")
+            # 예외 처리된 파일 확인
+            exclusions = SETTINGS.get('exclusions', {'folders': [], 'files': [], 'extensions': [], 'hashes': []})
+            excluded_files = []
+            scan_files = []
+            
+            for filepath in files:
+                excluded, reason = is_excluded(filepath, exclusions)
+                if excluded:
+                    excluded_files.append(f"{os.path.basename(filepath)} - {reason}")
+                else:
+                    scan_files.append(filepath)
+            
+            # 예외 처리된 파일이 있으면 알림
+            if excluded_files:
+                msg = "다음 파일은 검사 제외 설정되어 있습니다:\n\n"
+                msg += "\n".join(excluded_files[:10])  # 최대 10개만 표시
+                if len(excluded_files) > 10:
+                    msg += f"\n... 외 {len(excluded_files) - 10}개"
+                QMessageBox.information(self, "검사 제외 파일", msg)
+            
+            # 스캔할 파일이 있으면 스캔 시작
+            if scan_files:
+                self._start_batch_scan(scan_files, "파일 스캔")
+            elif not excluded_files:
+                QMessageBox.information(self, "알림", "스캔할 파일이 없습니다.")
 
     def scan_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "폴더 선택")
@@ -2709,23 +2812,34 @@ li {{ margin: 5px 0; }}
             self.quarantine_table.setItem(row, 1, QTableWidgetItem(quarantine_time))
             self.quarantine_table.setItem(row, 2, QTableWidgetItem(threat_name))
 
-            # 작업 버튼
-            btn_widget = QWidget()
-            btn_layout = QHBoxLayout()
-            btn_layout.setContentsMargins(0, 0, 0, 0)
-
-            restore_btn = QPushButton('↩️')
+            # 작업 버튼들 (복원, 삭제)을 하나의 위젯에 배치
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(2, 2, 2, 2)
+            action_layout.setSpacing(3)
+            
+            restore_btn = QPushButton('↩️ 복원')
             restore_btn.clicked.connect(lambda checked, f=filepath: self.restore_file(f))
-            btn_layout.addWidget(restore_btn)
-
-            delete_btn = QPushButton('🗑️')
+            action_layout.addWidget(restore_btn)
+            
+            delete_btn = QPushButton('🗑️ 삭제')
             delete_btn.clicked.connect(lambda checked, f=filepath: self.delete_file(f))
-            btn_layout.addWidget(delete_btn)
-
-            btn_widget.setLayout(btn_layout)
-            self.quarantine_table.setCellWidget(row, 3, btn_widget)
+            action_layout.addWidget(delete_btn)
+            
+            self.quarantine_table.setCellWidget(row, 3, action_widget)
+            
+            # 경로 확인 버튼 (별도 열)
+            path_btn = QPushButton('📁 경로 확인')
+            path_btn.clicked.connect(lambda checked, f=filepath: self.show_original_path(f))
+            self.quarantine_table.setCellWidget(row, 4, path_btn)
 
     def restore_file(self, filepath):
+        # 복원 확인 메시지
+        reply = QMessageBox.question(self, '파일 복원', '이 파일을 복원하시겠습니까?\n\n⚠️ 악성 파일일 수 있으니 주의하세요.',
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        
         try:
             # 격리 파일이 존재하는지 확인
             if not os.path.exists(filepath):
@@ -2771,7 +2885,7 @@ li {{ margin: 5px 0; }}
             QMessageBox.critical(self, "오류", f"복원 실패:\n{e}")
 
     def delete_file(self, filepath):
-        reply = QMessageBox.question(self, '확인', '파일을 영구적으로 삭제하시겠습니까?',
+        reply = QMessageBox.question(self, '파일 삭제', '이 파일을 영구적으로 삭제하시겠습니까?\n\n⚠️ 삭제 후 복구할 수 없습니다.',
                                      QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
             try:
@@ -2783,6 +2897,22 @@ li {{ margin: 5px 0; }}
                 QMessageBox.information(self, "성공", "파일이 삭제되었습니다.")
             except Exception as e:
                 QMessageBox.critical(self, "오류", f"삭제 실패:\n{e}")
+
+    def show_original_path(self, filepath):
+        """격리되기 전 원본 경로를 표시"""
+        meta_path = filepath + ".meta"
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, 'r', encoding='utf-8') as f:
+                    meta = json.load(f)
+                original_path = meta.get('original_path', '알 수 없음')
+                original_filename = meta.get('original_filename', '알 수 없음')
+                QMessageBox.information(self, '원본 경로 정보', 
+                    f'📁 파일명: {original_filename}\n\n📂 원본 경로:\n{original_path}')
+            except Exception as e:
+                QMessageBox.warning(self, '오류', f'메타데이터 읽기 실패:\n{e}')
+        else:
+            QMessageBox.warning(self, '오류', '메타데이터 파일이 없어 원본 경로를 확인할 수 없습니다.')
 
     def restore_from_quarantine(self):
         selected = self.quarantine_table.currentRow()
@@ -2815,6 +2945,10 @@ li {{ margin: 5px 0; }}
             except Exception as e:
                 QMessageBox.critical(self, "오류", f"삭제 실패:\n{e}")
 
+    def _append_monitor_log(self, msg):
+        """실시간 감시 로그에 메시지 추가 (메인 스레드에서 실행)"""
+        self.monitor_log.append(msg)
+
     def toggle_monitoring(self, checked):
         if checked:
             dir_ = QFileDialog.getExistingDirectory(self, "감시할 폴더 선택")
@@ -2824,17 +2958,17 @@ li {{ margin: 5px 0; }}
 
             self.monitor_btn.setText("⏹️ 실시간 감시 중지")
             self.monitor_path_label.setText(f"감시 중: {dir_}")
-            self.monitor_log.append(f"\n[{datetime.now().strftime('%H:%M:%S')}] 실시간 감시 시작: {dir_}\n")
+            self.monitor_log_signal.emit(f"\n[{datetime.now().strftime('%H:%M:%S')}] 실시간 감시 시작: {dir_}\n")
 
             self.observer = Observer()
-            handler = FolderHandler(lambda msg: self.monitor_log.append(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"))
+            handler = FolderHandler(lambda msg: self.monitor_log_signal.emit(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}"))
             self.observer.schedule(handler, dir_, recursive=False)
             self.observer.start()
         else:
             try:
                 self.observer.stop()
                 self.observer.join()
-                self.monitor_log.append(f"\n[{datetime.now().strftime('%H:%M:%S')}] 실시간 감시 중지\n")
+                self.monitor_log_signal.emit(f"\n[{datetime.now().strftime('%H:%M:%S')}] 실시간 감시 중지\n")
                 self.monitor_path_label.setText("감시 중인 폴더: 없음")
             except:
                 pass
@@ -2969,6 +3103,67 @@ li {{ margin: 5px 0; }}
             else:
                 QMessageBox.critical(self, "오류", "설정 저장에 실패했습니다.")
 
+    def change_settings_folder(self):
+        """설정 파일 저장 폴더 변경"""
+        global SETTINGS_FILE
+        new_folder = QFileDialog.getExistingDirectory(self, "설정 파일 저장 폴더 선택")
+        if new_folder:
+            new_settings_file = os.path.join(new_folder, "settings.json")
+            old_settings_file = SETTINGS_FILE
+            
+            try:
+                # 기존 설정 파일이 있으면 새 경로로 복사
+                if os.path.exists(old_settings_file) and old_settings_file != new_settings_file:
+                    shutil.copy2(old_settings_file, new_settings_file)
+                
+                # 설정 파일 경로 업데이트
+                SETTINGS_FILE = new_settings_file
+                SETTINGS['settings_file_path'] = new_settings_file
+                
+                # 새 경로에 설정 저장
+                if save_settings(SETTINGS):
+                    self.settings_path_label.setText(SETTINGS_FILE)
+                    QMessageBox.information(self, "성공", f"설정 파일 경로가 변경되었습니다.\n\n{new_settings_file}")
+                else:
+                    QMessageBox.critical(self, "오류", "설정 저장에 실패했습니다.")
+            except Exception as e:
+                QMessageBox.critical(self, "오류", f"경로 변경 실패:\n{e}")
+
+    def open_settings_folder(self):
+        """설정 파일이 있는 폴더 열기"""
+        settings_dir = os.path.dirname(SETTINGS_FILE)
+        if os.path.exists(settings_dir):
+            os.startfile(settings_dir)
+        else:
+            QMessageBox.warning(self, "오류", "설정 폴더가 존재하지 않습니다.")
+
+    def reset_settings_folder(self):
+        """설정 파일 경로를 기본값으로 재설정"""
+        global SETTINGS_FILE
+        reply = QMessageBox.question(self, '확인',
+                                     '설정 파일 경로를 기본값으로 재설정하시겠습니까?\n\n'
+                                     f'기본 경로: {SCRIPT_DIR}',
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            default_settings_file = os.path.join(SCRIPT_DIR, "settings.json")
+            old_settings_file = SETTINGS_FILE
+            
+            try:
+                # 기존 설정 파일이 있으면 기본 경로로 복사
+                if os.path.exists(old_settings_file) and old_settings_file != default_settings_file:
+                    shutil.copy2(old_settings_file, default_settings_file)
+                
+                SETTINGS_FILE = default_settings_file
+                SETTINGS['settings_file_path'] = default_settings_file
+                
+                if save_settings(SETTINGS):
+                    self.settings_path_label.setText(SETTINGS_FILE)
+                    QMessageBox.information(self, "성공", "설정 파일 경로가 기본값으로 재설정되었습니다.")
+                else:
+                    QMessageBox.critical(self, "오류", "설정 저장에 실패했습니다.")
+            except Exception as e:
+                QMessageBox.critical(self, "오류", f"경로 재설정 실패:\n{e}")
+
     def export_results(self):
         filename, _ = QFileDialog.getSaveFileName(self, "결과 내보내기", "",
                                                   "CSV Files (*.csv);;JSON Files (*.json);;All Files (*)")
@@ -3058,7 +3253,7 @@ li {{ margin: 5px 0; }}
         about_text = f"""
 <h2>🛡️ InfraRed</h2>
 <p><b>버전:</b> 2.0</p>
-<p><b>최종 업데이트:</b> 2026-01-08</p>
+<p><b>최종 업데이트:</b> 2026-01-17</p>
 <br>
 <p><b>주요 기능:</b></p>
 <ul>
@@ -3178,6 +3373,10 @@ li {{ margin: 5px 0; }}
                     color: #5dade2;
                     font-weight: bold;
                 }
+                QLabel#settings_path_label {
+                    color: #5dade2;
+                    font-weight: bold;
+                }
             """)
         else:
             # 라이트 모드
@@ -3252,6 +3451,10 @@ li {{ margin: 5px 0; }}
                     background-color: #e8e8e8;
                 }
                 QLabel#quarantine_path_label {
+                    color: #2c3e50;
+                    font-weight: bold;
+                }
+                QLabel#settings_path_label {
                     color: #2c3e50;
                     font-weight: bold;
                 }

@@ -1350,10 +1350,10 @@ EXPORT int add_suspicious_api(const char* name, const char* category, int risk_s
 // 엔진 정보
 // ============================================================================
 EXPORT const char* get_engine_stats() {
-    std::lock_guard<std::mutex> lock(g_mutex);
+    static char stats_buffer[4096];
 
-    snprintf(g_result_buffer, sizeof(g_result_buffer),
-        "{\"version\":\"4.0 Pro\","
+    snprintf(stats_buffer, sizeof(stats_buffer),
+        "{\"version\":\"V2.0\","
         "\"features\":[\"yara\",\"import_analysis\",\"pe_analysis\",\"archive_scan\"],"
         "\"signatures\":%d,\"yara_rules\":%d,\"suspicious_apis\":%d,"
         "\"md5_hashes\":%d,\"sha256_hashes\":%d,"
@@ -1362,9 +1362,9 @@ EXPORT const char* get_engine_stats() {
         (int)g_bad_md5.size(), (int)g_bad_sha256.size(),
         (int)g_whitelist_hashes.size(), (int)g_whitelist_paths.size());
 
-    return g_result_buffer;
+    return stats_buffer;
 }
 
 EXPORT const char* get_engine_version() {
-    return "4.0 Pro - YARA/Import/PE/Archive";
+    return "V2.0";
 }
