@@ -514,7 +514,7 @@ class AntivirusGUI(QWidget):
     
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("🛡️ InfraRed")
+        self.setWindowTitle("🛡️ InfraRed V2.0")
         self.setGeometry(100, 50, 1400, 900)
         self.stats = ScanStats()
         self.scan_history = self.load_history()
@@ -580,7 +580,7 @@ class AntivirusGUI(QWidget):
         toolbar.setFrameShape(QFrame.StyledPanel)
         layout = QHBoxLayout()
 
-        title = QLabel("🛡️ InfraRed")
+        title = QLabel("🛡️ InfraRed V2.0")
         title.setFont(QFont("Arial", 16, QFont.Bold))
         layout.addWidget(title)
 
@@ -3251,8 +3251,9 @@ li {{ margin: 5px 0; }}
     def show_about(self):
         """정보 다이얼로그 표시"""
         about_text = f"""
-<h2>🛡️ InfraRed</h2>
+<h2>🛡️ InfraRed V2.0</h2>
 <p><b>버전:</b> 2.0</p>
+<p><b>제작자:</b> Dangel</p>
 <p><b>최종 업데이트:</b> 2026-01-17</p>
 <br>
 <p><b>주요 기능:</b></p>
