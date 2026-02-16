@@ -72,6 +72,11 @@ InfraRed/
 │   └── quarantine/             # 격리 폴더
 ├── test_files/
 │   └── 악성코드 테스트.txt
+└── libcrypto-3-x64.dll
+└── libssl-3-x64.dll
+└── libgcc_s_seh-1.dll
+└── libstdc++-6.dll
+└─ libwinpthread-1.dll
 └── README.md
 ```
 
@@ -97,16 +102,7 @@ pip install -r python_gui/requirements.txt
 pip install PyQt5 watchdog pyqtchart
 ```
 
-### 2. C++ 엔진 빌드
-
-```bash
-cd cpp_engine
-build.bat
-```
-
-빌드 완료 후 `antivirus_core.dll`이 생성됩니다.
-
-### 3. 실행
+### 2. 실행
 
 ```bash
 cd python_gui
